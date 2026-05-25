@@ -6,6 +6,32 @@ A tiny HTTP service, packaged with Docker, deployed to a single-node
 Built for the Insider One DevOps internship case study. **Track B** (local
 minikube + ngrok) — chosen for a fast, zero-cost setup.
 
+## Architecture
+
+```mermaid
+flowchart TB
+    Dev[Developer] -->|git push / PR| GH[GitHub repo]
+    GH -->|triggers| CI[GitHub Actions<br/>pytest + docker build]
+    CI -->|on main, push image| GHCR[(GHCR registry)]
+
+    User[Internet user] -->|HTTPS| NG[ngrok public URL]
+    NG -->|secure tunnel| PF[kubectl port-forward<br/>localhost:8088]
+    PF --> SVC
+
+    subgraph MAC[macOS laptop]
+        subgraph MK[minikube cluster]
+            SVC[Service ping<br/>NodePort 80 to 8080] --> P1[Pod 1<br/>gunicorn + Flask :8080]
+            SVC --> P2[Pod 2<br/>gunicorn + Flask :8080]
+        end
+    end
+```
+
+There are two flows. The **build & deliver** path: a push or PR triggers GitHub
+Actions, which runs the tests and builds the image, and on merges to `main` also
+pushes the image to GHCR. The **runtime request** path: an internet request hits
+the ngrok public URL, which tunnels to `kubectl port-forward` on the laptop, into
+the NodePort Service, which load-balances across the two pods (gunicorn → Flask).
+
 ## Endpoints
 
 | Method | Path       | Response          | Purpose                              |
@@ -19,7 +45,7 @@ minikube + ngrok) — chosen for a fast, zero-cost setup.
 - **gunicorn** — production WSGI server (not Flask's dev server)
 - **Docker** — multi-stage build, runs as a non-root user
 - **Kubernetes / minikube** — Deployment + Service (NodePort)
-- **GitHub Actions** — CI: build, test, docker build
+- **GitHub Actions** — CI: test, docker build, and image push to GHCR
 - **ngrok** — exposes the service to the internet
 
 ## Configuration
@@ -115,7 +141,36 @@ required.
 
 ## Expose to the internet (ngrok)
 
-> _To be added — tunnel setup and public URL._
+The cluster runs locally, so the service is published to the public internet with
+an **ngrok** tunnel. A `kubectl port-forward` maps a fixed local port to the
+Service, and ngrok exposes that port over HTTPS:
+
+```bash
+# Terminal A — forward a local port to the Service (keep it running).
+kubectl port-forward svc/ping 8088:80
+
+# Terminal B — open a public HTTPS tunnel to that port (keep it running).
+ngrok http 8088
+```
+
+ngrok prints a public URL such as `https://<random>.ngrok-free.dev`. Test it:
+
+```bash
+curl https://<random>.ngrok-free.dev/ping     # -> pong
+curl https://<random>.ngrok-free.dev/healthz  # -> {"status":"ok"}
+```
+
+> The free ngrok URL is **ephemeral**: it changes on every restart and is only
+> live while `ngrok` is running. The demo screenshot below is the durable proof.
+
+Request path: **internet → ngrok → `localhost:8088` (port-forward) → NodePort
+Service → one of the pods → gunicorn → Flask.**
+
+## Demo
+
+`/ping` returning `pong` through the public ngrok URL:
+
+![Demo: /ping returns pong over the public ngrok URL](docs/demo.png)
 
 ## Branching
 
@@ -126,13 +181,19 @@ required.
 
 ```
 .
-├── app.py            # Flask service (/ping, /healthz)
-├── requirements.txt  # pinned dependencies
-├── Dockerfile        # multi-stage, non-root, gunicorn
+├── app.py                 # Flask service (/ping, /healthz)
+├── test_app.py            # pytest smoke tests
+├── requirements.txt       # pinned runtime dependencies
+├── requirements-dev.txt   # test-only dependencies (pytest)
+├── Dockerfile             # multi-stage, non-root, gunicorn
 ├── .dockerignore
 ├── .env.example
-├── k8s/              # Kubernetes manifests (added in the k8s step)
-└── .github/workflows # CI pipeline (added in the CI step)
+├── k8s/                   # Kubernetes manifests
+│   ├── deployment.yaml    # 2 replicas, probes, resource limits
+│   └── service.yaml       # NodePort Service
+├── .github/workflows/
+│   └── ci.yml             # CI: test + docker build + GHCR push
+└── docs/                  # architecture / demo assets
 ```
 
 ## Decisions log
@@ -145,3 +206,8 @@ required.
 - **`exec gunicorn` in CMD** so gunicorn is PID 1 and handles SIGTERM (graceful shutdown).
 - **Config via environment variables** (12-factor) — e.g. `PORT`.
 - **Track B (minikube + ngrok)** for a fast, zero-cost public URL.
+- **Kubernetes probes on `/healthz`** — liveness for self-healing, readiness so traffic only reaches ready pods.
+- **NodePort Service** to expose the app inside the single-node minikube cluster.
+- **Separate `requirements-dev.txt`** so test tooling stays out of the runtime image.
+- **CI pushes to GHCR only on `main`** (not on PRs) to keep the registry clean.
+- **`kubectl port-forward` + ngrok** for a stable local port behind a public HTTPS tunnel.
