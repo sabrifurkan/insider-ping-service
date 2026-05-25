@@ -62,11 +62,56 @@ docker run --rm insider-ping:local whoami   # -> appuser
 
 ## Kubernetes (minikube)
 
-> _To be added — Deployment + Service manifests and `kubectl apply` steps._
+The service runs on a single-node **minikube** cluster. Manifests live in
+[`k8s/`](k8s):
+
+- **`deployment.yaml`** — runs **2 replicas** of the pod and self-heals (if a
+  pod dies, the Deployment recreates it). Includes **liveness** and
+  **readiness** probes against `/healthz`, plus CPU/memory requests and limits.
+- **`service.yaml`** — a **NodePort** Service that load-balances across the
+  pods and exposes the app on node port `30080`.
+
+```bash
+# Start a local cluster (Docker driver).
+minikube start --driver=docker
+
+# Build the image, then load it INTO minikube so the cluster can use it
+# without pulling from a registry. (This is why imagePullPolicy is IfNotPresent.)
+docker build -t insider-ping:local .
+minikube image load insider-ping:local
+
+# Apply both manifests.
+kubectl apply -f k8s/
+
+# Verify: both pods should be 1/1 Running.
+kubectl get pods
+kubectl get svc
+
+# Open a tunnel to the Service and test through Kubernetes.
+minikube service ping --url        # prints e.g. http://127.0.0.1:62634
+curl http://127.0.0.1:<port>/ping  # -> pong
+```
+
+> **Gotcha:** minikube has its own Docker daemon, separate from your host's.
+> An image you built locally is invisible to the cluster until you run
+> `minikube image load`. Skipping this step causes `ImagePullBackOff`.
 
 ## CI (GitHub Actions)
 
-> _To be added — build + test + docker build workflow._
+The pipeline lives in [`.github/workflows/ci.yml`](.github/workflows/ci.yml)
+and runs on every push and pull request to `main`:
+
+1. **build-and-test** — checks out the code, sets up Python 3.12, installs
+   runtime + dev dependencies, runs the test suite with `pytest`, and finally
+   builds the Docker image (so a broken Dockerfile also fails CI).
+2. **publish-image** *(bonus)* — after the tests pass, on pushes to `main`,
+   builds and pushes the image to **GitHub Container Registry (GHCR)** at
+   `ghcr.io/<owner>/insider-ping`, tagged `latest` and the commit SHA. It
+   authenticates with the built-in `GITHUB_TOKEN`, so no extra secrets are
+   needed.
+
+Tests use Flask's test client (`test_app.py`) — no network or running server
+required.
 
 ## Expose to the internet (ngrok)
 
