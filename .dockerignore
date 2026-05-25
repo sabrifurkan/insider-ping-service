@@ -1,0 +1,13 @@
+# Keep the build context small and never bake local junk/secrets into the image.
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+.git/
+.gitignore
+.dockerignore
+.env
+.env.*
+*.md
+.github/
+k8s/
