@@ -1,0 +1,47 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ping
+  labels:
+    app: ping
+spec:
+  # Run 2 copies of the pod. If one dies, the Deployment recreates it.
+  replicas: 2
+  selector:
+    matchLabels:
+      app: ping
+  template:
+    metadata:
+      labels:
+        app: ping
+    spec:
+      containers:
+        - name: ping
+          # Local image loaded into minikube with `minikube image load`.
+          image: insider-ping:local
+          # Use the local image; don't try to pull it from a registry.
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8080
+          # Liveness: if /healthz stops responding, restart the container.
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          # Readiness: only send traffic once /healthz is OK.
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          # Resource hints so the scheduler knows what the pod needs.
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi

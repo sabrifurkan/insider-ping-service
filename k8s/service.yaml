@@ -1,0 +1,20 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: ping
+  labels:
+    app: ping
+spec:
+  type: NodePort
+  # Route traffic to every pod carrying the label app=ping.
+  selector:
+    app: ping
+  ports:
+    - name: http
+      protocol: TCP
+      # Port the Service exposes inside the cluster.
+      port: 80
+      # Port on the container the traffic is forwarded to.
+      targetPort: 8080
+      # Fixed external port on the node (range 30000-32767).
+      nodePort: 30080
